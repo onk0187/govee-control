@@ -1,299 +1,380 @@
-const cities = [
-  {
-    name: "Los Angeles",
-    timezone: "America/Los_Angeles",
-    lat: 34.05,
-    lon: -118.24,
-  },
-  { name: "New York", timezone: "America/New_York", lat: 40.71, lon: -74 },
-  { name: "London", timezone: "Europe/London", lat: 51.5, lon: -0.12 },
-  { name: "Berlin", timezone: "Europe/Berlin", lat: 52.52, lon: 13.4 },
-  { name: "Tokyo", timezone: "Asia/Tokyo", lat: 35.68, lon: 139.65 },
-  {
-    name: "Singapore",
-    timezone: "Asia/Singapore",
-    lat: 1.35,
-    lon: 103.82,
-  },
-  {
-    name: "Sydney",
-    timezone: "Australia/Sydney",
-    lat: -33.86,
-    lon: 151.21,
-  },
-];
+const API_BASE = "https://developer-api.govee.com/v1";
+const CONFIG = {
+  apiKey: window.GOVEE_API_KEY || "",
+};
 
-const activeCityNames = new Set(["Los Angeles", "New York", "London", "Tokyo"]);
+const elements = {
+  refreshBtn: document.getElementById("refreshBtn"),
+  allOffBtn: document.getElementById("allOffBtn"),
+  statusNotice: document.getElementById("statusNotice"),
+  deviceGroups: document.getElementById("deviceGroups"),
+  deviceCount: document.getElementById("deviceCount"),
+};
 
-const globe = document.getElementById("globe");
-const globeMap = document.getElementById("globeMap");
-const markerLayer = document.getElementById("markerLayer");
-const terminator = document.getElementById("terminator");
-const cityList = document.getElementById("cityList");
-const defaultSelect = document.getElementById("defaultSelect");
-const utcClock = document.getElementById("utcClock");
+const state = {
+  apiKey: "",
+  devices: [],
+  loading: false,
+};
 
-let rotation = 0;
-let defaultTimezone = "America/Los_Angeles";
-let dragging = false;
-let dragStartX = 0;
-let dragStartRotation = 0;
+function loadState() {
+  const storedKey = localStorage.getItem("goveeApiKey") || "";
+  state.apiKey = CONFIG.apiKey || storedKey;
+}
 
-const defaultOptions = [
-  { label: "UTC", timezone: "UTC" },
-  ...cities.map((city) => ({ label: city.name, timezone: city.timezone })),
-];
+function setStatus(message, tone = "neutral") {
+  elements.statusNotice.textContent = message;
+  elements.statusNotice.dataset.tone = tone;
+}
 
-function getTimeZoneOffsetMinutes(date, timeZone) {
-  const formatter = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    hour12: false,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
+function getBaseUrl() {
+  return API_BASE;
+}
+
+async function apiRequest(path, options = {}) {
+  if (!state.apiKey) {
+    throw new Error("Missing API key.");
+  }
+  const response = await fetch(`${getBaseUrl()}${path}`, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      "Govee-API-Key": state.apiKey,
+      ...(options.headers || {}),
+    },
   });
-  const parts = formatter.formatToParts(date);
-  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  const utcTime = Date.UTC(
-    Number(values.year),
-    Number(values.month) - 1,
-    Number(values.day),
-    Number(values.hour),
-    Number(values.minute),
-    Number(values.second)
-  );
-  return (utcTime - date.getTime()) / 60000;
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Request failed (${response.status}). ${text || ""}`.trim());
+  }
+
+  const data = await response.json();
+  if (data && data.code && data.code !== 200) {
+    throw new Error(data.message || "Govee API returned an error.");
+  }
+  return data;
 }
 
-function formatTime(date, timeZone) {
-  return new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: true,
-  }).format(date);
+function normalizeDevices(payload) {
+  if (!payload) return [];
+  const devices = payload.data && payload.data.devices ? payload.data.devices : [];
+  return devices.map((device) => ({
+    ...device,
+    supportCmds: device.supportCmds || [],
+    properties: device.properties || {},
+  }));
 }
 
-function formatDate(date, timeZone) {
-  return new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    weekday: "short",
-    month: "short",
-    day: "2-digit",
-  }).format(date);
+function getDeviceGroup(device) {
+  return device.model || "Unknown Model";
 }
 
-function updateUtcClock() {
-  const now = new Date();
-  utcClock.textContent = new Intl.DateTimeFormat("en-GB", {
-    timeZone: "UTC",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  }).format(now);
+function groupDevices(devices) {
+  return devices.reduce((acc, device) => {
+    const group = getDeviceGroup(device);
+    if (!acc[group]) acc[group] = [];
+    acc[group].push(device);
+    return acc;
+  }, {});
 }
 
-function createSelectOptions() {
-  defaultSelect.innerHTML = "";
-  defaultOptions.forEach((option) => {
-    const opt = document.createElement("option");
-    opt.value = option.timezone;
-    opt.textContent = option.label;
-    if (option.timezone === defaultTimezone) {
-      opt.selected = true;
-    }
-    defaultSelect.appendChild(opt);
-  });
+function deviceSupports(device, command) {
+  return device.controllable !== false && device.supportCmds.includes(command);
 }
 
-function addCityCard(city) {
-  const card = document.createElement("div");
-  card.className = "city-card";
+function getDeviceKind(device) {
+  const name = `${device.deviceName || ""} ${device.model || ""}`.toLowerCase();
+  if (name.includes("strip") || name.includes("glide")) return "strip";
+  if (name.includes("panel") || name.includes("hex") || name.includes("triangle")) {
+    return "panel";
+  }
+  if (name.includes("bulb")) return "bulb";
+  if (name.includes("lamp") || name.includes("floor")) return "lamp";
+  if (name.includes("plug")) return "plug";
+  return "light";
+}
 
-  const meta = document.createElement("div");
-  meta.className = "city-card__meta";
+function isLightKind(kind) {
+  return ["strip", "panel", "bulb", "lamp", "light"].includes(kind);
+}
 
-  const title = document.createElement("strong");
-  title.textContent = city.name;
+function getDeviceIcon(kind) {
+  switch (kind) {
+    case "strip":
+      return "<svg width=\"22\" height=\"22\" viewBox=\"0 0 24 24\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M4 7h16M4 12h16M4 17h10\" stroke=\"currentColor\" stroke-width=\"1.6\" stroke-linecap=\"round\"/></svg>";
+    case "panel":
+      return "<svg width=\"22\" height=\"22\" viewBox=\"0 0 24 24\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M5 7l7-4 7 4v10l-7 4-7-4V7z\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linejoin=\"round\"/></svg>";
+    case "bulb":
+      return "<svg width=\"22\" height=\"22\" viewBox=\"0 0 24 24\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M12 3a6 6 0 0 1 4 10c-1 1-1.5 2-1.5 3.5h-5C9.5 15 9 14 8 13a6 6 0 0 1 4-10z\" stroke=\"currentColor\" stroke-width=\"1.5\"/><path d=\"M9 20h6\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\"/></svg>";
+    case "lamp":
+      return "<svg width=\"22\" height=\"22\" viewBox=\"0 0 24 24\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M7 9h10l-2 5H9L7 9z\" stroke=\"currentColor\" stroke-width=\"1.5\"/><path d=\"M12 14v6\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\"/></svg>";
+    case "plug":
+      return "<svg width=\"22\" height=\"22\" viewBox=\"0 0 24 24\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M8 3v6M16 3v6M7 9h10v4a5 5 0 0 1-10 0V9z\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\"/></svg>";
+    default:
+      return "<svg width=\"22\" height=\"22\" viewBox=\"0 0 24 24\" fill=\"none\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M6 12a6 6 0 1 1 12 0\" stroke=\"currentColor\" stroke-width=\"1.5\"/><path d=\"M9 20h6\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\"/></svg>";
+  }
+}
 
-  const timezone = document.createElement("span");
-  timezone.textContent = city.timezone;
+function createControlRow(label, control) {
+  const row = document.createElement("div");
+  row.className = "control-row";
+  const name = document.createElement("span");
+  name.textContent = label;
+  row.append(name, control);
+  return row;
+}
 
-  meta.append(title, timezone);
+function setRangeVisual(range) {
+  const min = Number(range.min || 0);
+  const max = Number(range.max || 100);
+  const value = Number(range.value || 0);
+  const percent = ((value - min) / (max - min)) * 100;
+  range.style.setProperty("--value", `${percent}%`);
+}
 
-  const actions = document.createElement("div");
-  actions.className = "city-card__actions";
-
+function createPowerToggle({ initialOn = false, onToggle }) {
   const button = document.createElement("button");
   button.type = "button";
-  button.textContent = "Remove";
+  button.className = "power-toggle";
+  button.setAttribute("aria-pressed", String(initialOn));
+  button.dataset.state = initialOn ? "on" : "off";
+  button.innerHTML = "<span></span>";
   button.addEventListener("click", () => {
-    activeCityNames.delete(city.name);
-    render();
+    const isOn = button.dataset.state === "on";
+    const nextState = isOn ? "off" : "on";
+    button.dataset.state = nextState;
+    button.setAttribute("aria-pressed", String(nextState === "on"));
+    if (onToggle) onToggle(nextState);
   });
-
-  actions.appendChild(button);
-  card.append(meta, actions);
-
-  cityList.appendChild(card);
+  return button;
 }
 
-function getActiveCities() {
-  return cities.filter((city) => activeCityNames.has(city.name));
+async function loadDevices() {
+  if (!state.apiKey) {
+    setStatus("Missing API key. Set it in config.js or localStorage.", "warn");
+    return;
+  }
+
+  state.loading = true;
+  setStatus("Loading devices...", "neutral");
+  elements.refreshBtn.disabled = true;
+  try {
+    const payload = await apiRequest("/devices");
+    state.devices = normalizeDevices(payload);
+    setStatus(`Connected. ${state.devices.length} devices found.`, "success");
+    renderDevices();
+  } catch (error) {
+    setStatus(error.message || "Failed to load devices.", "error");
+  } finally {
+    state.loading = false;
+    elements.refreshBtn.disabled = false;
+  }
 }
 
-function calculateMarkerPosition(city, radius) {
-  const lat = (city.lat || 0) * (Math.PI / 180);
-  const lon = (city.lon || 0) * (Math.PI / 180) + rotation;
-  const x = Math.cos(lat) * Math.sin(lon);
-  const y = Math.sin(lat);
-  const z = Math.cos(lat) * Math.cos(lon);
+async function sendCommand(device, name, value) {
+  try {
+    await apiRequest("/devices/control", {
+      method: "PUT",
+      body: JSON.stringify({
+        device: device.device,
+        model: device.model,
+        cmd: { name, value },
+      }),
+    });
+    setStatus(`${device.deviceName}: ${name} updated.`, "success");
+  } catch (error) {
+    setStatus(error.message || "Command failed.", "error");
+  }
+}
 
+function renderDevices() {
+  elements.deviceGroups.innerHTML = "";
+  elements.deviceCount.textContent = `${state.devices.length} devices`;
+
+  if (!state.devices.length) {
+    const empty = document.createElement("div");
+    empty.className = "muted";
+    empty.textContent = "No devices loaded yet.";
+    elements.deviceGroups.appendChild(empty);
+    return;
+  }
+
+  const grouped = groupDevices(state.devices);
+  Object.entries(grouped).forEach(([groupName, devices]) => {
+    const group = document.createElement("div");
+    group.className = "group";
+
+    const head = document.createElement("div");
+    head.className = "group__head";
+
+    const title = document.createElement("div");
+    title.className = "group__title";
+    title.textContent = `${groupName} (${devices.length})`;
+
+    const controls = document.createElement("div");
+    controls.className = "group__controls";
+    const groupToggle = createPowerToggle({
+      initialOn: false,
+      onToggle: (state) => {
+        devices.forEach((device) => {
+          if (deviceSupports(device, "turn")) {
+            sendCommand(device, "turn", state);
+          }
+        });
+      },
+    });
+    controls.appendChild(groupToggle);
+    head.append(title, controls);
+
+    const grid = document.createElement("div");
+    grid.className = "device-grid";
+
+    devices.forEach((device) => {
+      const card = document.createElement("div");
+      card.className = "device-card";
+
+      const info = document.createElement("div");
+      info.className = "device-card__info";
+
+      const icon = document.createElement("div");
+      icon.className = "device-icon";
+      const kind = getDeviceKind(device);
+      icon.innerHTML = getDeviceIcon(kind);
+
+      const meta = document.createElement("div");
+      const name = document.createElement("strong");
+      name.textContent = device.deviceName || "Unnamed device";
+      const sub = document.createElement("span");
+      sub.textContent = `${device.model || "model"} - ${device.device}`;
+      sub.className = "device-meta";
+      const infoToggle = document.createElement("button");
+      infoToggle.type = "button";
+      infoToggle.className = "info-toggle";
+      infoToggle.setAttribute("aria-expanded", "false");
+      infoToggle.textContent = "i";
+      infoToggle.addEventListener("click", () => {
+        const expanded = infoToggle.getAttribute("aria-expanded") === "true";
+        infoToggle.setAttribute("aria-expanded", String(!expanded));
+        card.classList.toggle("show-meta", !expanded);
+      });
+      const metaRow = document.createElement("div");
+      metaRow.className = "device-meta__row";
+      metaRow.append(name, infoToggle);
+      meta.append(metaRow, sub);
+
+      info.append(icon, meta);
+
+      const controlsWrap = document.createElement("div");
+      controlsWrap.className = "device-card__controls";
+      card.style.setProperty("--accent-color", "#d46a45");
+
+      const canTurn = deviceSupports(device, "turn");
+      if (canTurn || isLightKind(kind)) {
+        const powerToggle = createPowerToggle({
+          initialOn: false,
+          onToggle: (state) => {
+            card.classList.toggle("is-on", state === "on");
+            if (canTurn) sendCommand(device, "turn", state);
+          },
+        });
+        powerToggle.disabled = !canTurn;
+        controlsWrap.appendChild(powerToggle);
+      }
+
+      if (deviceSupports(device, "brightness")) {
+        const slider = document.createElement("input");
+        slider.type = "range";
+        slider.min = "0";
+        slider.max = "100";
+        slider.value = "50";
+        slider.addEventListener("input", () => setRangeVisual(slider));
+        slider.addEventListener("change", () =>
+          sendCommand(device, "brightness", Number(slider.value))
+        );
+        setRangeVisual(slider);
+        controlsWrap.appendChild(createControlRow("Brightness", slider));
+      }
+
+      if (deviceSupports(device, "color")) {
+        const color = document.createElement("input");
+        color.type = "color";
+        color.value = "#ff7a4a";
+        color.addEventListener("change", () => {
+          const rgb = hexToRgb(color.value);
+          if (!rgb) return;
+          card.style.setProperty("--glow-color", color.value);
+          card.style.setProperty("--accent-color", color.value);
+          sendCommand(device, "color", rgb);
+        });
+        card.style.setProperty("--glow-color", color.value);
+        card.style.setProperty("--accent-color", color.value);
+        controlsWrap.appendChild(createControlRow("Color", color));
+      }
+
+      if (deviceSupports(device, "colorTem")) {
+        const range = device.properties?.colorTem?.range || { min: 2000, max: 9000 };
+        const temp = document.createElement("input");
+        temp.type = "range";
+        temp.min = String(range.min || 2000);
+        temp.max = String(range.max || 9000);
+        temp.value = String(Math.round((Number(temp.min) + Number(temp.max)) / 2));
+        temp.addEventListener("input", () => setRangeVisual(temp));
+        temp.addEventListener("change", () =>
+          sendCommand(device, "colorTem", Number(temp.value))
+        );
+        setRangeVisual(temp);
+        controlsWrap.appendChild(createControlRow("Temp", temp));
+      }
+
+      const tags = document.createElement("div");
+      tags.className = "tag-list";
+      device.supportCmds.forEach((cmd) => {
+        const tag = document.createElement("span");
+        tag.className = "tag";
+        tag.textContent = cmd;
+        tags.appendChild(tag);
+      });
+
+      controlsWrap.append(tags);
+
+      card.append(info, controlsWrap);
+      grid.appendChild(card);
+    });
+
+    group.append(head, grid);
+    elements.deviceGroups.appendChild(group);
+  });
+}
+
+function hexToRgb(hex) {
+  const raw = hex.replace("#", "");
+  if (raw.length !== 6) return null;
+  const bigint = parseInt(raw, 16);
   return {
-    x: radius * x,
-    y: radius * y,
-    z,
+    r: (bigint >> 16) & 255,
+    g: (bigint >> 8) & 255,
+    b: bigint & 255,
   };
 }
 
-function updateMarkers(now) {
-  markerLayer.innerHTML = "";
-  const radius = globe.clientWidth / 2;
-  const activeCities = getActiveCities();
-  const defaultOffset = getTimeZoneOffsetMinutes(now, defaultTimezone);
+function wireEvents() {
+  elements.refreshBtn.addEventListener("click", () => loadDevices());
 
-  activeCities.forEach((city) => {
-    const marker = document.createElement("div");
-    marker.className = "marker";
-
-    const position = calculateMarkerPosition(city, radius * 0.82);
-    const center = radius;
-
-    if (position.z < 0) {
-      marker.classList.add("marker--back");
-    }
-
-    marker.style.left = `${center + position.x}px`;
-    marker.style.top = `${center + position.y}px`;
-
-    const line = document.createElement("div");
-    line.className = "marker__line";
-
-    const label = document.createElement("div");
-    label.className = "marker__label";
-
-    const time = formatTime(now, city.timezone);
-    const date = formatDate(now, city.timezone);
-    const cityOffset = getTimeZoneOffsetMinutes(now, city.timezone);
-    const diffHours = (cityOffset - defaultOffset) / 60;
-    const diffLabel = diffHours === 0 ? "±0" : `${diffHours > 0 ? "+" : ""}${diffHours}`;
-
-    label.innerHTML = `
-      <strong>${city.name}</strong>
-      ${time} · ${date}
-      <span class="delta">${diffLabel}h vs default</span>
-    `;
-
-    marker.append(line, label);
-    markerLayer.appendChild(marker);
+  elements.allOffBtn.addEventListener("click", () => {
+    state.devices.forEach((device) => {
+      if (deviceSupports(device, "turn")) {
+        sendCommand(device, "turn", "off");
+      }
+    });
   });
 }
 
-function updateTerminator(now) {
-  const utcHours =
-    now.getUTCHours() + now.getUTCMinutes() / 60 + now.getUTCSeconds() / 3600;
-  const subsolarLongitude = (12 - utcHours) * 15;
-  const rotationDegrees = subsolarLongitude + rotation * (180 / Math.PI);
-  terminator.style.transform = `rotate(${rotationDegrees}deg)`;
+function hydrateUI() {
+  renderDevices();
 }
 
-function updateMap() {
-  const degrees = rotation * (180 / Math.PI);
-  const offset = ((degrees / 360) * 100 + 50) % 100;
-  globeMap.style.backgroundPosition = `${offset}% 50%`;
-}
-
-function render() {
-  const now = new Date();
-  updateUtcClock();
-  updateMap();
-  updateTerminator(now);
-  updateMarkers(now);
-  cityList.innerHTML = "";
-  getActiveCities().forEach((city) => addCityCard(city));
-}
-
-function startClock() {
-  render();
-  setInterval(render, 1000);
-}
-
-function addCity({ name, timezone }) {
-  const existing = cities.find((city) => city.timezone === timezone);
-  if (existing && !cities.find((city) => city.name === name)) {
-    cities.push({ ...existing, name });
-  } else if (!existing) {
-    const now = new Date();
-    const offsetMinutes = getTimeZoneOffsetMinutes(now, timezone);
-    const offsetHours = offsetMinutes / 60;
-    const lon = offsetHours * 15;
-    cities.push({ name, timezone, lat: 0, lon });
-  }
-
-  activeCityNames.add(name);
-  if (!defaultOptions.find((option) => option.timezone === timezone)) {
-    defaultOptions.push({ label: name, timezone });
-  }
-  createSelectOptions();
-  render();
-}
-
-function handleRotationStart(event) {
-  dragging = true;
-  dragStartX = event.clientX;
-  dragStartRotation = rotation;
-}
-
-function handleRotationMove(event) {
-  if (!dragging) return;
-  const delta = event.clientX - dragStartX;
-  rotation = dragStartRotation + delta * 0.01;
-  render();
-}
-
-function handleRotationEnd() {
-  dragging = false;
-}
-
-function addEventListeners() {
-  defaultSelect.addEventListener("change", (event) => {
-    defaultTimezone = event.target.value;
-    render();
-  });
-
-  globe.addEventListener("pointerdown", (event) => {
-    globe.setPointerCapture(event.pointerId);
-    handleRotationStart(event);
-  });
-  globe.addEventListener("pointermove", handleRotationMove);
-  globe.addEventListener("pointerup", handleRotationEnd);
-  globe.addEventListener("pointerleave", handleRotationEnd);
-
-  document.getElementById("addCityForm").addEventListener("submit", (event) => {
-    event.preventDefault();
-    const nameInput = document.getElementById("cityName");
-    const timezoneInput = document.getElementById("cityTimezone");
-    if (!nameInput.value || !timezoneInput.value) return;
-    addCity({ name: nameInput.value.trim(), timezone: timezoneInput.value.trim() });
-    nameInput.value = "";
-    timezoneInput.value = "";
-  });
-}
-
-createSelectOptions();
-addEventListeners();
-startClock();
+loadState();
+wireEvents();
+hydrateUI();
+loadDevices();

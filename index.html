@@ -3,86 +3,49 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>TimeSphere</title>
+    <title>Govee Control</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
     <div class="app">
       <header class="app__header">
         <div>
-          <p class="eyebrow">TimeSphere</p>
-          <h1>Global time visualization on a living globe.</h1>
+          <p class="eyebrow">Govee Control</p>
+          <h1>Minimal control for every Govee light you own.</h1>
           <p class="subtitle">
-            Spin the world, compare time zones, and visualize day versus night in
-            real time.
+            Auto-connected on load. Manage power, brightness, and color from a
+            clean dashboard.
           </p>
         </div>
-        <div class="header__clock">
-          <p>UTC</p>
-          <span id="utcClock">--:--:--</span>
-        </div>
+        <div class="header__status" id="statusNotice">Not connected.</div>
       </header>
 
       <main class="app__main">
-        <section class="globe-panel">
-          <div class="globe" id="globe">
-            <div class="globe__map" id="globeMap"></div>
-            <div class="globe__terminator" id="terminator"></div>
-            <div class="globe__shine"></div>
-            <div class="globe__markers" id="markerLayer"></div>
+        <section class="panel panel--devices">
+          <div class="panel__head">
+            <div>
+              <p class="eyebrow">Devices</p>
+              <h2>All Lights</h2>
+              <p class="muted" id="deviceCount">0 devices</p>
+            </div>
+            <div class="panel__actions">
+              <button id="refreshBtn">Refresh</button>
+              <button id="allOffBtn" class="ghost">All Off</button>
+            </div>
           </div>
-          <div class="globe__hint">
-            Drag to rotate · Live times update every second
-          </div>
+
+          <div class="device-groups" id="deviceGroups"></div>
         </section>
-
-        <aside class="control-panel">
-          <div class="panel-section">
-            <h2>Default reference</h2>
-            <p class="panel-text">
-              Choose a base location to see relative offsets and bias the
-              day/night visualization.
-            </p>
-            <select id="defaultSelect" aria-label="Default location"></select>
-          </div>
-
-          <div class="panel-section">
-            <h2>Tracked cities</h2>
-            <div class="city-list" id="cityList"></div>
-          </div>
-
-          <div class="panel-section">
-            <h2>Add a city</h2>
-            <form id="addCityForm">
-              <label>
-                City label
-                <input
-                  type="text"
-                  id="cityName"
-                  placeholder="e.g., São Paulo"
-                  required
-                />
-              </label>
-              <label>
-                Timezone (IANA)
-                <input
-                  type="text"
-                  id="cityTimezone"
-                  placeholder="e.g., America/Sao_Paulo"
-                  required
-                />
-              </label>
-              <button type="submit">Add city</button>
-            </form>
-            <p class="panel-text small">
-              If the city is unknown, TimeSphere will place it on the equator
-              based on its timezone offset.
-            </p>
-          </div>
-        </aside>
       </main>
     </div>
 
+    <script src="config.js"></script>
     <script src="app.js"></script>
   </body>
 </html>
