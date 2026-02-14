@@ -1,0 +1,21 @@
+{
+  "name": "oi-sandbox",
+  "version": "1.0.0",
+  "description": "Local AI sandbox repo",
+  "main": "app.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/onk0187/govee-control.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/onk0187/govee-control/issues"
+  },
+  "homepage": "https://github.com/onk0187/govee-control#readme"
+}

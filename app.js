@@ -1,3 +1,165 @@
+// F1 Car Night Live Wallpaper Animation
+const canvas = document.getElementById('wallpaper');
+const ctx = canvas.getContext('2d');
+
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resize);
+resize();
+
+// Car properties
+const car = {
+  x: () => canvas.width / 2,
+  y: () => canvas.height * 0.7,
+  width: 320,
+  height: 80,
+  color: '#e10600',
+};
+
+// Street properties
+function drawStreet() {
+  ctx.save();
+  ctx.fillStyle = '#222';
+  ctx.fillRect(0, canvas.height * 0.6, canvas.width, canvas.height * 0.4);
+  // Lane lines
+  ctx.strokeStyle = '#fff8';
+  ctx.lineWidth = 6;
+  ctx.setLineDash([40, 30]);
+  ctx.beginPath();
+  ctx.moveTo(0, canvas.height * 0.8);
+  ctx.lineTo(canvas.width, canvas.height * 0.8);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.restore();
+}
+
+// Simple F1 car shape
+function drawCar() {
+  const x = car.x();
+  const y = car.y();
+  ctx.save();
+  ctx.translate(x, y);
+  // Body
+  ctx.fillStyle = car.color;
+  ctx.fillRect(-car.width/2, -car.height/2, car.width, car.height/2);
+  // Cockpit
+  ctx.fillStyle = '#222';
+  ctx.fillRect(-30, -car.height/2-10, 60, 30);
+  // Front/rear wings
+  ctx.fillStyle = '#888';
+  ctx.fillRect(-car.width/2-20, -car.height/2+10, 40, 10);
+  ctx.fillRect(car.width/2-20, -car.height/2+10, 40, 10);
+  ctx.fillRect(-car.width/2-20, 0, 40, 10);
+  ctx.fillRect(car.width/2-20, 0, 40, 10);
+  // Wheels
+  ctx.fillStyle = '#111';
+  for (let dx of [-car.width/2+30, car.width/2-30]) {
+    ctx.beginPath();
+    ctx.ellipse(dx, -car.height/2+5, 18, 10, 0, 0, Math.PI*2);
+    ctx.ellipse(dx, car.height/4, 18, 10, 0, 0, Math.PI*2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+// Night lights
+function drawLights(time) {
+  for (let i = 0; i < 8; i++) {
+    const lx = (canvas.width / 8) * i + 60;
+    const ly = canvas.height * 0.6;
+    ctx.save();
+    ctx.globalAlpha = 0.25 + 0.15 * Math.sin(time/600 + i);
+    ctx.beginPath();
+    ctx.arc(lx, ly, 80, 0, Math.PI*2);
+    ctx.fillStyle = '#fffbe6';
+    ctx.shadowColor = '#fffbe6';
+    ctx.shadowBlur = 40;
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+// Steam particles
+const steamParticles = [];
+function spawnSteam() {
+  const baseX = car.x();
+  const baseY = car.y() - car.height/2;
+  for (let i = 0; i < 2; i++) {
+    steamParticles.push({
+      x: baseX + (Math.random()-0.5)*30,
+      y: baseY + 10 + Math.random()*10,
+      vx: (Math.random()-0.5)*0.3,
+      vy: -0.5 - Math.random()*0.7,
+      alpha: 0.5 + Math.random()*0.3,
+      radius: 18 + Math.random()*12,
+      life: 0
+    });
+  }
+}
+
+function drawSteam(time) {
+  spawnSteam();
+  for (let i = steamParticles.length-1; i >= 0; i--) {
+    const p = steamParticles[i];
+    p.x += p.vx;
+    p.y += p.vy;
+    p.life += 1;
+    p.alpha *= 0.985;
+    ctx.save();
+    ctx.globalAlpha = p.alpha * (1 - p.life/120);
+    ctx.beginPath();
+    ctx.ellipse(p.x, p.y, p.radius, p.radius*0.6, 0, 0, Math.PI*2);
+    ctx.fillStyle = '#e0e6f6';
+    ctx.shadowColor = '#e0e6f6';
+    ctx.shadowBlur = 16;
+    ctx.fill();
+    ctx.restore();
+    if (p.life > 120 || p.alpha < 0.05) steamParticles.splice(i, 1);
+  }
+}
+
+// Enhanced glittering lights
+function drawGlitteringLights(time) {
+  for (let i = 0; i < 8; i++) {
+    const lx = (canvas.width / 8) * i + 60;
+    const ly = canvas.height * 0.6;
+    ctx.save();
+    // Main glow
+    ctx.globalAlpha = 0.22 + 0.18 * Math.abs(Math.sin(time/600 + i));
+    ctx.beginPath();
+    ctx.arc(lx, ly, 80, 0, Math.PI*2);
+    ctx.fillStyle = '#fffbe6';
+    ctx.shadowColor = '#fffbe6';
+    ctx.shadowBlur = 40;
+    ctx.fill();
+    // Glitter
+    for (let j = 0; j < 6; j++) {
+      const angle = (time/400 + i*2 + j) % (Math.PI*2);
+      const rx = lx + Math.cos(angle) * (60 + Math.random()*20);
+      const ry = ly + Math.sin(angle) * (60 + Math.random()*20);
+      ctx.globalAlpha = 0.08 + 0.08 * Math.random();
+      ctx.beginPath();
+      ctx.arc(rx, ry, 2 + Math.random()*2, 0, Math.PI*2);
+      ctx.fillStyle = '#fffbe6';
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+}
+
+// Animation loop
+function animate(time) {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  drawStreet();
+  drawGlitteringLights(time);
+  drawCar();
+  drawSteam(time);
+  requestAnimationFrame(animate);
+}
+
+animate(0);
 const API_BASE = "https://developer-api.govee.com/v1";
 const CONFIG = {
   apiKey: window.GOVEE_API_KEY || "",
